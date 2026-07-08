@@ -3,11 +3,13 @@ package com.example.Finance.service.impl;
 import com.example.Finance.dto.BudgetDto;
 import com.example.Finance.entity.Budget;
 import com.example.Finance.entity.Category;
+import com.example.Finance.entity.TransactionType;
 import com.example.Finance.entity.User;
 import com.example.Finance.exception.APIException;
 import com.example.Finance.exception.ResourceNotFoundException;
 import com.example.Finance.repository.BudgetRepository;
 import com.example.Finance.repository.CategoryRepository;
+import com.example.Finance.repository.TransactionRepository;
 import com.example.Finance.repository.UserRepository;
 import com.example.Finance.service.BudgetService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class BudgetServiceImpl implements BudgetService {
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
+    private final TransactionRepository transactionRepository;
 
     @Override
     public BudgetDto createBudget(String email, BudgetDto budgetDto) {
@@ -43,21 +46,24 @@ public class BudgetServiceImpl implements BudgetService {
 
         Budget budget = new Budget();
         budget.setLimitAmount(budgetDto.getLimitAmount());
-        budget.setSpentAmount(budgetDto.getSpentAmount() != null ? budgetDto.getSpentAmount() : BigDecimal.ZERO);
+        // spentAmount is always calculated dynamically; store 0 in DB
+        budget.setSpentAmount(BigDecimal.ZERO);
         budget.setMonth(budgetDto.getMonth());
         budget.setYear(budgetDto.getYear());
         budget.setUser(user);
         budget.setCategory(category);
 
         Budget newBudget = budgetRepository.save(budget);
-        return mapToDto(newBudget);
+        return mapToDto(newBudget, user.getId());
     }
 
     @Override
     public List<BudgetDto> getAllBudgets(String email) {
         User user = getUserByEmail(email);
         List<Budget> budgets = budgetRepository.findByUserId(user.getId());
-        return budgets.stream().map(this::mapToDto).collect(Collectors.toList());
+        return budgets.stream()
+                .map(b -> mapToDto(b, user.getId()))
+                .collect(Collectors.toList());
     }
 
     @Override
@@ -70,7 +76,7 @@ public class BudgetServiceImpl implements BudgetService {
             throw new APIException(HttpStatus.BAD_REQUEST, "Budget does not belong to user");
         }
 
-        return mapToDto(budget);
+        return mapToDto(budget, user.getId());
     }
 
     @Override
@@ -84,12 +90,10 @@ public class BudgetServiceImpl implements BudgetService {
         }
 
         budget.setLimitAmount(budgetDto.getLimitAmount());
-        if(budgetDto.getSpentAmount() != null) {
-            budget.setSpentAmount(budgetDto.getSpentAmount());
-        }
+        // Do NOT update spentAmount from client; it's always computed from transactions
 
         Budget updatedBudget = budgetRepository.save(budget);
-        return mapToDto(updatedBudget);
+        return mapToDto(updatedBudget, user.getId());
     }
 
     @Override
@@ -115,11 +119,23 @@ public class BudgetServiceImpl implements BudgetService {
                 .orElseThrow(() -> new ResourceNotFoundException("Category", "id", id));
     }
 
-    private BudgetDto mapToDto(Budget budget){
+    /**
+     * Maps Budget entity to DTO, calculating spentAmount dynamically from actual transactions.
+     * This ensures accuracy regardless of create/update/delete order.
+     */
+    private BudgetDto mapToDto(Budget budget, Long userId) {
+        BigDecimal actualSpent = transactionRepository.sumAmountByUserCategoryTypeMonthYear(
+                userId,
+                budget.getCategory().getId(),
+                TransactionType.EXPENSE,
+                budget.getMonth(),
+                budget.getYear()
+        );
+
         BudgetDto budgetDto = new BudgetDto();
         budgetDto.setId(budget.getId());
         budgetDto.setLimitAmount(budget.getLimitAmount());
-        budgetDto.setSpentAmount(budget.getSpentAmount());
+        budgetDto.setSpentAmount(actualSpent != null ? actualSpent : BigDecimal.ZERO);
         budgetDto.setMonth(budget.getMonth());
         budgetDto.setYear(budget.getYear());
         budgetDto.setCategoryId(budget.getCategory().getId());

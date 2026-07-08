@@ -1,5 +1,6 @@
 package com.example.Finance.dto;
 
+import com.example.Finance.entity.Role;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -16,4 +17,5 @@ public class UserDto {
     private String fullName;
     private String email;
     private LocalDateTime createdAt;
+    private Role role;
 }

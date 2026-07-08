@@ -80,10 +80,10 @@ public class TransactionServiceImpl implements TransactionService {
 
         Transaction newTransaction = transactionRepository.save(transaction);
 
-        // Update budget and get potential warning
+        // Check budget and issue warning if exceeded (spentAmount is now computed dynamically)
         String warningMessage = null;
         if(transaction.getType() == TransactionType.EXPENSE) {
-            warningMessage = updateBudgetSpentAmountAndGetWarning(user.getId(), category.getId(), transaction.getTransactionDate(), transaction.getAmount(), category);
+            warningMessage = checkBudgetWarning(user.getId(), category.getId(), transaction.getTransactionDate(), category);
         }
 
         TransactionDto dto = mapToDto(newTransaction);
@@ -148,10 +148,7 @@ public class TransactionServiceImpl implements TransactionService {
             walletRepository.save(oldWallet);
         }
 
-        // 2. Revert budget if it was an expense
-        if(transaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmountAndGetWarning(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate(), transaction.getCategory());
-        }
+        // 2. No manual budget revert needed - spentAmount is computed dynamically
 
         // 3. Apply new transaction balance impact to new wallet
         if (transactionDto.getType() == TransactionType.INCOME) {
@@ -174,10 +171,10 @@ public class TransactionServiceImpl implements TransactionService {
 
         Transaction updatedTransaction = transactionRepository.save(transaction);
 
-        // 4. Apply new budget if it is an expense and get potential warning
+        // 4. Check budget warning after update (dynamic calculation)
         String warningMessage = null;
         if(updatedTransaction.getType() == TransactionType.EXPENSE) {
-            warningMessage = updateBudgetSpentAmountAndGetWarning(user.getId(), category.getId(), updatedTransaction.getTransactionDate(), updatedTransaction.getAmount(), category);
+            warningMessage = checkBudgetWarning(user.getId(), category.getId(), updatedTransaction.getTransactionDate(), category);
         }
 
         TransactionDto dto = mapToDto(updatedTransaction);
@@ -209,10 +206,7 @@ public class TransactionServiceImpl implements TransactionService {
             walletRepository.save(wallet);
         }
 
-        // Revert budget if it was an expense
-        if(transaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmountAndGetWarning(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate(), transaction.getCategory());
-        }
+        // No manual budget revert needed - spentAmount is computed dynamically
 
         transactionRepository.delete(transaction);
     }
@@ -224,18 +218,21 @@ public class TransactionServiceImpl implements TransactionService {
         return transactions.stream().map(this::mapToDto).collect(Collectors.toList());
     }
 
-    private String updateBudgetSpentAmountAndGetWarning(Long userId, Long categoryId, LocalDate date, BigDecimal amount, Category category) {
+    /**
+     * Check if budget is exceeded after transaction (dynamic calculation).
+     */
+    private String checkBudgetWarning(Long userId, Long categoryId, LocalDate date, Category category) {
         Optional<Budget> budgetOpt = budgetRepository.findByUserIdAndCategoryIdAndMonthAndYear(
                 userId, categoryId, date.getMonthValue(), date.getYear());
-        
+
         if (budgetOpt.isPresent()) {
             Budget budget = budgetOpt.get();
-            BigDecimal newSpent = budget.getSpentAmount().add(amount);
-            budget.setSpentAmount(newSpent);
-            budgetRepository.save(budget);
-            if (newSpent.compareTo(budget.getLimitAmount()) > 0) {
-                return "Warning: Monthly budget exceeded for category: " + category.getName() + 
-                       "! Limit: " + budget.getLimitAmount() + ", Spent: " + newSpent;
+            BigDecimal actualSpent = transactionRepository.sumAmountByUserCategoryTypeMonthYear(
+                    userId, categoryId, com.example.Finance.entity.TransactionType.EXPENSE,
+                    date.getMonthValue(), date.getYear());
+            if (actualSpent != null && actualSpent.compareTo(budget.getLimitAmount()) > 0) {
+                return "Warning: Monthly budget exceeded for category: " + category.getName() +
+                       "! Limit: " + budget.getLimitAmount() + ", Spent: " + actualSpent;
             }
         }
         return null;
