@@ -21,4 +21,6 @@ public class TransactionDto {
     private String description;
     private LocalDate transactionDate;
     private Long categoryId;
+    private Long walletId;
+    private String warning;
 }

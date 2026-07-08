@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.Map;
 
 @RestController
@@ -57,4 +58,23 @@ public class ReportController {
             @RequestParam int year) {
         return ResponseEntity.ok(statisticsService.getTrend(authentication.getName(), year));
     }
+
+    @Operation(summary = "Daily report: income & expense grouped by day for a period")
+    @GetMapping("/daily")
+    public ResponseEntity<Map<String, Object>> getDailyReport(
+            Authentication authentication,
+            @RequestParam LocalDate startDate,
+            @RequestParam LocalDate endDate) {
+        return ResponseEntity.ok(statisticsService.getDailyStatistics(authentication.getName(), startDate, endDate));
+    }
+
+    @Operation(summary = "Weekly report: income & expense grouped by week for a period")
+    @GetMapping("/weekly")
+    public ResponseEntity<Map<String, Object>> getWeeklyReport(
+            Authentication authentication,
+            @RequestParam LocalDate startDate,
+            @RequestParam LocalDate endDate) {
+        return ResponseEntity.ok(statisticsService.getWeeklyStatistics(authentication.getName(), startDate, endDate));
+    }
 }
+

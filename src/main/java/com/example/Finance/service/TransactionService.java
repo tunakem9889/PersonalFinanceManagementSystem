@@ -11,5 +11,5 @@ public interface TransactionService {
     TransactionDto getTransactionById(String email, Long transactionId);
     TransactionDto updateTransaction(String email, Long transactionId, TransactionDto transactionDto);
     void deleteTransaction(String email, Long transactionId);
-    List<TransactionDto> filterTransactions(String email, LocalDate startDate, LocalDate endDate);
+    List<TransactionDto> filterTransactions(String email, Long walletId, Long categoryId, LocalDate startDate, LocalDate endDate);
 }

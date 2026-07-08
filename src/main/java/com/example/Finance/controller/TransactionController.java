@@ -56,9 +56,11 @@ public class TransactionController {
     @GetMapping("/filter")
     public ResponseEntity<List<TransactionDto>> filterTransactions(
             Authentication authentication,
+            @RequestParam(value = "walletId", required = false) Long walletId,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
             @RequestParam("startDate") LocalDate startDate,
             @RequestParam("endDate") LocalDate endDate){
         String email = authentication.getName();
-        return ResponseEntity.ok(transactionService.filterTransactions(email, startDate, endDate));
+        return ResponseEntity.ok(transactionService.filterTransactions(email, walletId, categoryId, startDate, endDate));
     }
 }

@@ -8,10 +8,12 @@ import com.example.Finance.entity.TransactionType;
 import com.example.Finance.entity.User;
 import com.example.Finance.exception.APIException;
 import com.example.Finance.exception.ResourceNotFoundException;
+import com.example.Finance.entity.Wallet;
 import com.example.Finance.repository.BudgetRepository;
 import com.example.Finance.repository.CategoryRepository;
 import com.example.Finance.repository.TransactionRepository;
 import com.example.Finance.repository.UserRepository;
+import com.example.Finance.repository.WalletRepository;
 import com.example.Finance.service.TransactionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -32,6 +34,7 @@ public class TransactionServiceImpl implements TransactionService {
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
     private final BudgetRepository budgetRepository;
+    private final WalletRepository walletRepository;
 
     @Override
     @Transactional
@@ -43,6 +46,28 @@ public class TransactionServiceImpl implements TransactionService {
             throw new APIException(HttpStatus.BAD_REQUEST, "Category does not belong to user");
         }
 
+        if (transactionDto.getWalletId() == null) {
+            throw new APIException(HttpStatus.BAD_REQUEST, "Wallet ID is required");
+        }
+
+        Wallet wallet = walletRepository.findById(transactionDto.getWalletId())
+                .orElseThrow(() -> new ResourceNotFoundException("Wallet", "id", transactionDto.getWalletId()));
+
+        if (!wallet.getUser().getId().equals(user.getId())) {
+            throw new APIException(HttpStatus.BAD_REQUEST, "Wallet does not belong to user");
+        }
+
+        // Check and update wallet balance
+        if (transactionDto.getType() == TransactionType.INCOME) {
+            wallet.setCurrentBalance(wallet.getCurrentBalance().add(transactionDto.getAmount()));
+        } else if (transactionDto.getType() == TransactionType.EXPENSE) {
+            if (wallet.getCurrentBalance().compareTo(transactionDto.getAmount()) < 0) {
+                throw new APIException(HttpStatus.BAD_REQUEST, "Insufficient balance in wallet. Available: " + wallet.getCurrentBalance());
+            }
+            wallet.setCurrentBalance(wallet.getCurrentBalance().subtract(transactionDto.getAmount()));
+        }
+        walletRepository.save(wallet);
+
         Transaction transaction = new Transaction();
         transaction.setAmount(transactionDto.getAmount());
         transaction.setType(transactionDto.getType());
@@ -51,15 +76,19 @@ public class TransactionServiceImpl implements TransactionService {
         transaction.setTransactionDate(transactionDto.getTransactionDate());
         transaction.setUser(user);
         transaction.setCategory(category);
+        transaction.setWallet(wallet);
 
         Transaction newTransaction = transactionRepository.save(transaction);
 
-        // Update budget if it's an expense
+        // Update budget and get potential warning
+        String warningMessage = null;
         if(transaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmount(user.getId(), category.getId(), transaction.getTransactionDate(), transaction.getAmount());
+            warningMessage = updateBudgetSpentAmountAndGetWarning(user.getId(), category.getId(), transaction.getTransactionDate(), transaction.getAmount(), category);
         }
 
-        return mapToDto(newTransaction);
+        TransactionDto dto = mapToDto(newTransaction);
+        dto.setWarning(warningMessage);
+        return dto;
     }
 
     @Override
@@ -96,10 +125,44 @@ public class TransactionServiceImpl implements TransactionService {
             throw new APIException(HttpStatus.BAD_REQUEST, "Category does not belong to user");
         }
 
-        // Revert budget if it was an expense
-        if(transaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmount(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate());
+        if (transactionDto.getWalletId() == null) {
+            throw new APIException(HttpStatus.BAD_REQUEST, "Wallet ID is required");
         }
+
+        Wallet newWallet = walletRepository.findById(transactionDto.getWalletId())
+                .orElseThrow(() -> new ResourceNotFoundException("Wallet", "id", transactionDto.getWalletId()));
+
+        if (!newWallet.getUser().getId().equals(user.getId())) {
+            throw new APIException(HttpStatus.BAD_REQUEST, "Wallet does not belong to user");
+        }
+
+        Wallet oldWallet = transaction.getWallet();
+
+        // 1. Revert old transaction balance impact from old wallet
+        if (oldWallet != null) {
+            if (transaction.getType() == TransactionType.INCOME) {
+                oldWallet.setCurrentBalance(oldWallet.getCurrentBalance().subtract(transaction.getAmount()));
+            } else if (transaction.getType() == TransactionType.EXPENSE) {
+                oldWallet.setCurrentBalance(oldWallet.getCurrentBalance().add(transaction.getAmount()));
+            }
+            walletRepository.save(oldWallet);
+        }
+
+        // 2. Revert budget if it was an expense
+        if(transaction.getType() == TransactionType.EXPENSE) {
+            updateBudgetSpentAmountAndGetWarning(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate(), transaction.getCategory());
+        }
+
+        // 3. Apply new transaction balance impact to new wallet
+        if (transactionDto.getType() == TransactionType.INCOME) {
+            newWallet.setCurrentBalance(newWallet.getCurrentBalance().add(transactionDto.getAmount()));
+        } else if (transactionDto.getType() == TransactionType.EXPENSE) {
+            if (newWallet.getCurrentBalance().compareTo(transactionDto.getAmount()) < 0) {
+                throw new APIException(HttpStatus.BAD_REQUEST, "Insufficient balance in wallet. Available: " + newWallet.getCurrentBalance());
+            }
+            newWallet.setCurrentBalance(newWallet.getCurrentBalance().subtract(transactionDto.getAmount()));
+        }
+        walletRepository.save(newWallet);
 
         transaction.setAmount(transactionDto.getAmount());
         transaction.setType(transactionDto.getType());
@@ -107,15 +170,19 @@ public class TransactionServiceImpl implements TransactionService {
         transaction.setDescription(transactionDto.getDescription());
         transaction.setTransactionDate(transactionDto.getTransactionDate());
         transaction.setCategory(category);
+        transaction.setWallet(newWallet);
 
         Transaction updatedTransaction = transactionRepository.save(transaction);
 
-        // Apply new budget if it is an expense
+        // 4. Apply new budget if it is an expense and get potential warning
+        String warningMessage = null;
         if(updatedTransaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmount(user.getId(), category.getId(), updatedTransaction.getTransactionDate(), updatedTransaction.getAmount());
+            warningMessage = updateBudgetSpentAmountAndGetWarning(user.getId(), category.getId(), updatedTransaction.getTransactionDate(), updatedTransaction.getAmount(), category);
         }
 
-        return mapToDto(updatedTransaction);
+        TransactionDto dto = mapToDto(updatedTransaction);
+        dto.setWarning(warningMessage);
+        return dto;
     }
 
     @Override
@@ -128,30 +195,50 @@ public class TransactionServiceImpl implements TransactionService {
             throw new APIException(HttpStatus.BAD_REQUEST, "Transaction does not belong to user");
         }
 
+        // Revert wallet balance
+        Wallet wallet = transaction.getWallet();
+        if (wallet != null) {
+            if (transaction.getType() == TransactionType.INCOME) {
+                if (wallet.getCurrentBalance().compareTo(transaction.getAmount()) < 0) {
+                    throw new APIException(HttpStatus.BAD_REQUEST, "Cannot delete transaction: would result in negative wallet balance");
+                }
+                wallet.setCurrentBalance(wallet.getCurrentBalance().subtract(transaction.getAmount()));
+            } else if (transaction.getType() == TransactionType.EXPENSE) {
+                wallet.setCurrentBalance(wallet.getCurrentBalance().add(transaction.getAmount()));
+            }
+            walletRepository.save(wallet);
+        }
+
         // Revert budget if it was an expense
         if(transaction.getType() == TransactionType.EXPENSE) {
-            updateBudgetSpentAmount(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate());
+            updateBudgetSpentAmountAndGetWarning(user.getId(), transaction.getCategory().getId(), transaction.getTransactionDate(), transaction.getAmount().negate(), transaction.getCategory());
         }
 
         transactionRepository.delete(transaction);
     }
 
     @Override
-    public List<TransactionDto> filterTransactions(String email, LocalDate startDate, LocalDate endDate) {
+    public List<TransactionDto> filterTransactions(String email, Long walletId, Long categoryId, LocalDate startDate, LocalDate endDate) {
         User user = getUserByEmail(email);
-        List<Transaction> transactions = transactionRepository.findByUserIdAndDateBetween(user.getId(), startDate, endDate);
+        List<Transaction> transactions = transactionRepository.filterTransactions(user.getId(), walletId, categoryId, startDate, endDate);
         return transactions.stream().map(this::mapToDto).collect(Collectors.toList());
     }
 
-    private void updateBudgetSpentAmount(Long userId, Long categoryId, LocalDate date, BigDecimal amount) {
+    private String updateBudgetSpentAmountAndGetWarning(Long userId, Long categoryId, LocalDate date, BigDecimal amount, Category category) {
         Optional<Budget> budgetOpt = budgetRepository.findByUserIdAndCategoryIdAndMonthAndYear(
                 userId, categoryId, date.getMonthValue(), date.getYear());
         
         if (budgetOpt.isPresent()) {
             Budget budget = budgetOpt.get();
-            budget.setSpentAmount(budget.getSpentAmount().add(amount));
+            BigDecimal newSpent = budget.getSpentAmount().add(amount);
+            budget.setSpentAmount(newSpent);
             budgetRepository.save(budget);
+            if (newSpent.compareTo(budget.getLimitAmount()) > 0) {
+                return "Warning: Monthly budget exceeded for category: " + category.getName() + 
+                       "! Limit: " + budget.getLimitAmount() + ", Spent: " + newSpent;
+            }
         }
+        return null;
     }
 
     private User getUserByEmail(String email){
@@ -178,6 +265,10 @@ public class TransactionServiceImpl implements TransactionService {
         transactionDto.setDescription(transaction.getDescription());
         transactionDto.setTransactionDate(transaction.getTransactionDate());
         transactionDto.setCategoryId(transaction.getCategory().getId());
+        if (transaction.getWallet() != null) {
+            transactionDto.setWalletId(transaction.getWallet().getId());
+        }
         return transactionDto;
     }
 }
+

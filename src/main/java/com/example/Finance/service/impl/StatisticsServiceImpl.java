@@ -191,8 +191,113 @@ public class StatisticsServiceImpl implements StatisticsService {
         return statistics;
     }
 
+    @Override
+    public Map<String, Object> getDailyStatistics(String email, LocalDate startDate, LocalDate endDate) {
+        User user = getUserByEmail(email);
+        List<Transaction> transactions = transactionRepository.findByUserIdAndDateBetween(user.getId(), startDate, endDate);
+
+        Map<LocalDate, Map<String, BigDecimal>> dailyMap = new LinkedHashMap<>();
+        
+        LocalDate current = startDate;
+        while (!current.isAfter(endDate)) {
+            Map<String, BigDecimal> dayData = new HashMap<>();
+            dayData.put("income", BigDecimal.ZERO);
+            dayData.put("expense", BigDecimal.ZERO);
+            dailyMap.put(current, dayData);
+            current = current.plusDays(1);
+        }
+
+        for (Transaction t : transactions) {
+            LocalDate date = t.getTransactionDate();
+            Map<String, BigDecimal> dayData = dailyMap.get(date);
+            if (dayData == null) {
+                dayData = new HashMap<>();
+                dayData.put("income", BigDecimal.ZERO);
+                dayData.put("expense", BigDecimal.ZERO);
+                dailyMap.put(date, dayData);
+            }
+            if (t.getType() == TransactionType.INCOME) {
+                dayData.put("income", dayData.get("income").add(t.getAmount()));
+            } else if (t.getType() == TransactionType.EXPENSE) {
+                dayData.put("expense", dayData.get("expense").add(t.getAmount()));
+            }
+        }
+
+        List<Map<String, Object>> dailyList = new ArrayList<>();
+        for (Map.Entry<LocalDate, Map<String, BigDecimal>> entry : dailyMap.entrySet()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", entry.getKey().toString());
+            BigDecimal income = entry.getValue().get("income");
+            BigDecimal expense = entry.getValue().get("expense");
+            row.put("income", income);
+            row.put("expense", expense);
+            row.put("balance", income.subtract(expense));
+            dailyList.add(row);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("dailyStatistics", dailyList);
+        return result;
+    }
+
+    @Override
+    public Map<String, Object> getWeeklyStatistics(String email, LocalDate startDate, LocalDate endDate) {
+        User user = getUserByEmail(email);
+        List<Transaction> transactions = transactionRepository.findByUserIdAndDateBetween(user.getId(), startDate, endDate);
+
+        Map<LocalDate, Map<String, BigDecimal>> weeklyMap = new LinkedHashMap<>();
+
+        LocalDate firstMonday = startDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+        LocalDate currentMonday = firstMonday;
+
+        while (!currentMonday.isAfter(endDate)) {
+            Map<String, BigDecimal> weekData = new HashMap<>();
+            weekData.put("income", BigDecimal.ZERO);
+            weekData.put("expense", BigDecimal.ZERO);
+            weeklyMap.put(currentMonday, weekData);
+            currentMonday = currentMonday.plusWeeks(1);
+        }
+
+        for (Transaction t : transactions) {
+            LocalDate date = t.getTransactionDate();
+            LocalDate monday = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY));
+            Map<String, BigDecimal> weekData = weeklyMap.get(monday);
+            if (weekData == null) {
+                weekData = new HashMap<>();
+                weekData.put("income", BigDecimal.ZERO);
+                weekData.put("expense", BigDecimal.ZERO);
+                weeklyMap.put(monday, weekData);
+            }
+            if (t.getType() == TransactionType.INCOME) {
+                weekData.put("income", weekData.get("income").add(t.getAmount()));
+            } else if (t.getType() == TransactionType.EXPENSE) {
+                weekData.put("expense", weekData.get("expense").add(t.getAmount()));
+            }
+        }
+
+        List<Map<String, Object>> weeklyList = new ArrayList<>();
+        for (Map.Entry<LocalDate, Map<String, BigDecimal>> entry : weeklyMap.entrySet()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            LocalDate startOfWeek = entry.getKey();
+            LocalDate endOfWeek = startOfWeek.plusDays(6);
+            row.put("weekStart", startOfWeek.toString());
+            row.put("weekEnd", endOfWeek.toString());
+            BigDecimal income = entry.getValue().get("income");
+            BigDecimal expense = entry.getValue().get("expense");
+            row.put("income", income);
+            row.put("expense", expense);
+            row.put("balance", income.subtract(expense));
+            weeklyList.add(row);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("weeklyStatistics", weeklyList);
+        return result;
+    }
+
     private User getUserByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "email", email));
     }
 }
+
