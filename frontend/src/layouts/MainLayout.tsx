@@ -109,7 +109,7 @@ export default function MainLayout() {
 
       {/* Main Content */}
       <div className="flex flex-col flex-1 overflow-hidden">
-        <header className="flex h-14 lg:h-[60px] items-center gap-4 border-b bg-background px-6">
+        <header className="flex h-14 lg:h-[60px] items-center gap-4 border-b bg-background px-6 shrink-0">
           <div className="w-full flex-1">
             <h1 className="text-lg font-semibold">
               Welcome back, {displayName.split(" ")[0]}!
@@ -137,6 +137,7 @@ export default function MainLayout() {
                 localStorage.removeItem("accessToken");
                 localStorage.removeItem("refreshToken");
                 localStorage.removeItem("user");
+                localStorage.removeItem("impersonatedUser");
                 window.location.href = "/login";
               }}
               className="text-sm font-medium text-muted-foreground hover:text-foreground"
@@ -148,8 +149,36 @@ export default function MainLayout() {
             </div>
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto p-6">
-          <Outlet />
+        <main className="flex-1 overflow-y-auto flex flex-col">
+          {(() => {
+            const impersonatedStr = localStorage.getItem("impersonatedUser");
+            if (!impersonatedStr) return null;
+            try {
+              const impersonatedUser = JSON.parse(impersonatedStr);
+              return (
+                <div className="bg-amber-500 text-amber-950 px-6 py-2 flex items-center justify-between text-sm shadow-sm z-10 shrink-0">
+                  <div className="flex items-center gap-2 font-medium">
+                    <span>⚠️ Impersonation Mode:</span>
+                    <span className="opacity-90 font-normal">You are viewing data as <strong>{impersonatedUser.email}</strong>. Modifications are disabled.</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("impersonatedUser");
+                      window.location.href = "/admin/users";
+                    }}
+                    className="bg-amber-950/10 hover:bg-amber-950/20 px-3 py-1 rounded-md text-xs font-semibold transition-colors"
+                  >
+                    Exit Impersonation
+                  </button>
+                </div>
+              );
+            } catch {
+              return null;
+            }
+          })()}
+          <div className="p-6 flex-1">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

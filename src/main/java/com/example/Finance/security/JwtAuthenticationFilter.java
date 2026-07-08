@@ -43,6 +43,30 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // load the user associated with token
             UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
+            // Handle Impersonation
+            String impersonateEmail = request.getHeader("X-Impersonate-User");
+            if (StringUtils.hasText(impersonateEmail)) {
+                boolean isAdmin = userDetails.getAuthorities().stream()
+                        .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                
+                if (isAdmin) {
+                    String method = request.getMethod();
+                    // Allow GET and OPTIONS, block mutations
+                    if (!method.equalsIgnoreCase("GET") && !method.equalsIgnoreCase("OPTIONS")) {
+                        response.sendError(HttpServletResponse.SC_FORBIDDEN, "Modifications are disabled in impersonation mode.");
+                        return;
+                    }
+                    
+                    // Switch context to impersonated user
+                    try {
+                        userDetails = userDetailsService.loadUserByUsername(impersonateEmail);
+                    } catch (Exception e) {
+                        response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Impersonated user not found.");
+                        return;
+                    }
+                }
+            }
+
             UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
                 userDetails,
                 null,

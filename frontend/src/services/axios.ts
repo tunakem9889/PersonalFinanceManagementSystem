@@ -13,6 +13,17 @@ api.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const impersonated = localStorage.getItem('impersonatedUser');
+    if (impersonated && config.headers) {
+      try {
+        const parsed = JSON.parse(impersonated);
+        if (parsed?.email) {
+          config.headers['X-Impersonate-User'] = parsed.email;
+        }
+      } catch (e) {
+        // ignore JSON parse error
+      }
+    }
     return config;
   },
   (error) => {

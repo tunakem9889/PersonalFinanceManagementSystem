@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAdminUsers, useDeleteAdminUser } from "../hooks/useAdmin";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/Card";
-import { Users, Trash2, Search, Shield, Mail, Calendar, UserCheck, UserX } from "lucide-react";
+import { Users, Trash2, Search, Shield, Mail, Calendar, UserCheck, UserX, Eye } from "lucide-react";
 import { cn } from "../utils/cn";
 
 function StatBadge({ label, value, color }: { label: string; value: number; color: string }) {
@@ -31,6 +31,12 @@ export default function AdminUsers() {
     deleteUser(id, {
       onSettled: () => setDeletingId(null),
     });
+  };
+
+  const handleImpersonate = (email: string) => {
+    localStorage.setItem("impersonatedUser", JSON.stringify({ email }));
+    // Force a full reload to apply the global axios interceptor header correctly across all queries
+    window.location.href = "/";
   };
 
   const formatDate = (iso: string) => {
@@ -159,7 +165,18 @@ export default function AdminUsers() {
                       <td className="py-3 pr-4 text-muted-foreground hidden lg:table-cell">
                         {user.createdAt ? formatDate(user.createdAt) : "—"}
                       </td>
-                      <td className="py-3 text-right">
+                      <td className="py-3 text-right flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleImpersonate(user.email)}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+                            "border border-blue-200 text-blue-600 hover:bg-blue-50"
+                          )}
+                          title="View Data"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          View Data
+                        </button>
                         <button
                           onClick={() => handleDelete(user.id, user.fullName)}
                           disabled={isDeleting && deletingId === user.id}
